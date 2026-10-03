@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>Meu Livro-Caixa</title>
+<meta name="description" content="Controle de gastos e entradas mensais, sincronizado entre aparelhos" />
+
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#1A1F1B" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Livro-Caixa" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<link rel="icon" href="icon-192.png" />
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap');
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: 'IBM Plex Sans', system-ui, sans-serif; background: #F7F6F2; overscroll-behavior-y: none; transition: background-color 0.2s ease; }
+  #root { min-height: 100vh; }
+  .cf-font-display { font-family: 'Zilla Slab', Georgia, serif; }
+  .cf-font-mono { font-family: 'IBM Plex Mono', 'Courier New', monospace; font-variant-numeric: tabular-nums; }
+  @keyframes cf-fade-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+  .cf-toast { animation: cf-fade-in 0.25s ease-out; }
+  @keyframes cf-modal-in { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+  .cf-modal { animation: cf-modal-in 0.18s ease-out; }
+  button, input, select { font-family: inherit; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #C4922F; outline-offset: 2px; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #999; border-radius: 4px; opacity: 0.4; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+  .cf-flex { display: flex; }
+  .cf-grid { display: grid; }
+  .cf-hide-sm { display: inline; }
+  @media (max-width: 640px) { .cf-hide-sm { display: none; } }
+  code { font-family: 'IBM Plex Mono', monospace; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:#9CA599;font-family:'IBM Plex Sans',sans-serif;font-size:14px;">
+    Carregando...
+  </div>
+</div>
+
+<!-- ======================================================================
+     CONFIGURAÇÃO DO FIREBASE — já preenchida com os dados do projeto
+     livro-caixa-422f5. Se precisar trocar de projeto, cole os novos
+     dados aqui.
+     ====================================================================== -->
+<script type="module">
+  const firebaseConfig = {
+    apiKey: "AIzaSyB3JRBHIXQiJYTDzcs7e3TYkc9YXoZem1o",
+    authDomain: "livro-caixa-422f5.firebaseapp.com",
+    projectId: "livro-caixa-422f5",
+    storageBucket: "livro-caixa-422f5.firebasestorage.app",
+    messagingSenderId: "2505121002",
+    appId: "1:2505121002:web:024c93fed4bfc9a6260b93"
+  };
+  /* ===================================================================== */
+
+  window.__firebaseConfigured = firebaseConfig.apiKey !== "COLE_AQUI" && !!firebaseConfig.apiKey;
+
+  if (window.__firebaseConfigured) {
+    const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+    const { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup } =
+      await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
+    const { getFirestore, doc, getDoc, setDoc, onSnapshot, enableIndexedDbPersistence } =
+      await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    try { await enableIndexedDbPersistence(db); } catch (e) { console.warn('Cache offline não disponível:', e.code || e.message); }
+
+    window.__firebase = {
+      auth, db, doc, getDoc, setDoc, onSnapshot,
+      createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut,
+      GoogleAuthProvider, signInWithPopup
+    };
+  }
+
+  window.dispatchEvent(new Event('firebase-ready'));
+</script>
+
+<script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef, createContext, useContext } = React;
+
+/* ---------------------------------------------------------------------- */
+/* Design tokens — a faixa escura (header + saldo) é sempre escura; o     */
+/* resto da página alterna entre os dois temas abaixo.                    */
+/* ---------------------------------------------------------------------- */
+
+const HERO = {
+  bg: '#1A1F1B', text: '#F7F6F2', textFaint: 'rgba(247,246,242,0.55)', lineOnDark: 'rgba(247,246,242,0.14)',
+  ledgerBright: '#3FB88A', brickBright: '#EF8267', brass: '#C4922F'
+};
+
+const LIGHT_COLORS = { paper: '#F7F6F2', surface: '#FFFFFF', ink: '#1E241F', inkSoft: '#646F60', inkFaint: '#9CA599', ledger: '#12724F', brick: '#AE4432', brass: '#C4922F', line: '#E4E0D3' };
+const DARK_COLORS = { paper: '#1B1F1B', surface: '#23271F', ink: '#EDEBE2', inkSoft: '#A7AEA2', inkFaint: '#6E756A', ledger: '#3FB88A', brick: '#E2695A', brass: '#D9A94A', line: '#343A33' };
+
+const ThemeContext = createContext({ colors: LIGHT_COLORS, isDark: false, toggleTheme: () => {} });
+function useColors() { return useContext(ThemeContext).colors; }
+function useTheme() { return useContext(ThemeContext); }
+
+function ThemeProvider({ children }) {
+  const [isDark, setIsDark] = useState(() => {
+    try {
+      const saved = localStorage.getItem('livro-caixa:theme');
+      if (saved) return saved === 'dark';
+    } catch (e) {}
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem('livro-caixa:theme', isDark ? 'dark' : 'light'); } catch (e) {}
+  }, [isDark]);
+
+  const colors = isDark ? DARK_COLORS : LIGHT_COLORS;
+
+  useEffect(() => {
+    document.body.style.backgroundColor = colors.paper;
+  }, [colors]);
+
+  const value = useMemo(() => ({ colors, isDark, toggleTheme: () => setIsDark(d => !d) }), [colors, isDark]);
+
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Data                                                                    */
+/* ---------------------------------------------------------------------- */
+
+const CATEGORIES = [
+  { id: 'alimentacao', name: 'Alimentação', type: 'expense', icon: '🍽️', color: '#C1652E' },
+  { id: 'transporte', name: 'Transporte', type: 'expense', icon: '🚗', color: '#3B7A9E' },
+  { id: 'moradia', name: 'Moradia', type: 'expense', icon: '🏠', color: '#7A6B9E' },
+  { id: 'lazer', name: 'Lazer', type: 'expense', icon: '🎮', color: '#B2467B' },
+  { id: 'saude', name: 'Saúde', type: 'expense', icon: '🩺', color: '#A64545' },
+  { id: 'educacao', name: 'Educação', type: 'expense', icon: '🎓', color: '#2E8B7E' },
+  { id: 'compras', name: 'Compras', type: 'expense', icon: '🛍️', color: '#B8A02E' },
+  { id: 'contas', name: 'Contas', type: 'expense', icon: '🧾', color: '#6E7B8B' },
+  { id: 'assinaturas', name: 'Assinaturas', type: 'expense', icon: '🔁', color: '#8B6F47' },
+  { id: 'outros_despesa', name: 'Outros', type: 'expense', icon: '⋯', color: '#8A8A82' },
+  { id: 'salario', name: 'Salário', type: 'income', icon: '💼', color: '#12724F' },
+  { id: 'freelance', name: 'Freelance', type: 'income', icon: '💻', color: '#3FA68A' },
+  { id: 'investimentos', name: 'Investimentos', type: 'income', icon: '📈', color: '#2E8B57' },
+  { id: 'outros_receita', name: 'Outros', type: 'income', icon: '⋯', color: '#8A8A82' },
+];
+
+const PAYMENT_METHODS = [
+  { id: 'dinheiro', name: 'Dinheiro', icon: '💵' },
+  { id: 'credito', name: 'Cartão de Crédito', icon: '💳' },
+  { id: 'debito', name: 'Cartão de Débito', icon: '💳' },
+  { id: 'pix', name: 'Pix', icon: '🔲' },
+  { id: 'transferencia', name: 'Transferência', icon: '🏦' },
+];
+
+const MONTH_NAMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
+/* ---------------------------------------------------------------------- */
+/* Helpers                                                                 */
+/* ---------------------------------------------------------------------- */
+
+function formatCurrency(value) {
+  return (Number(value) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+function formatDateBR(dateStr) {
+  const [y, m, d] = dateStr.split('-');
+  return `${d}/${m}/${y}`;
+}
+function generateId() {
+  return 'txn_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+function getCategoryById(id) {
+  return CATEGORIES.find(c => c.id === id) || CATEGORIES[CATEGORIES.length - 1];
+}
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function pctChange(current, prev) {
+  if (prev === 0) return current > 0 ? 100 : 0;
+  return ((current - prev) / prev) * 100;
+}
+function traduzErroAuth(code) {
+  const map = {
+    'auth/email-already-in-use': 'Esse e-mail já está cadastrado. Tente entrar.',
+    'auth/invalid-email': 'E-mail inválido.',
+    'auth/weak-password': 'A senha precisa ter pelo menos 6 caracteres.',
+    'auth/user-not-found': 'E-mail ou senha incorretos.',
+    'auth/wrong-password': 'E-mail ou senha incorretos.',
+    'auth/invalid-credential': 'E-mail ou senha incorretos.',
+    'auth/too-many-requests': 'Muitas tentativas. Aguarde um momento e tente de novo.',
+    'auth/unauthorized-domain': 'Este site ainda não foi autorizado no Firebase. Vá em Authentication > Configurações > Domínios autorizados e adicione este domínio.',
+    'auth/popup-closed-by-user': 'Login cancelado.',
+  };
+  return map[code] || 'Algo deu errado. Tente novamente.';
+}
+// Gera N datas mensais a partir de uma data base, respeitando o tamanho de cada mês
+function gerarDatasRecorrentes(baseDateISO, quantidade) {
+  const [by, bm, bd] = baseDateISO.split('-').map(Number);
+  const datas = [];
+  for (let i = 0; i < quantidade; i++) {
+    const alvo = new Date(by, (bm - 1) + i, 1);
+    const diasNoMes = new Date(alvo.getFullYear(), alvo.getMonth() + 1, 0).getDate();
+    const dia = Math.min(bd, diasNoMes);
+    const final = new Date(alvo.getFullYear(), alvo.getMonth(), dia);
+    datas.push(`${final.getFullYear()}-${String(final.getMonth()+1).padStart(2,'0')}-${String(final.getDate()).padStart(2,'0')}`);
+  }
+  return datas;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Tiny dependency-free charts                                            */
+/* ---------------------------------------------------------------------- */
+
+function DonutChart({ data, size = 180, thickness = 26 }) {
+  const COLORS = useColors();
+  const total = data.reduce((sum, d) => sum + d.value, 0);
+  const radius = (size - thickness) / 2;
+  const circumference = 2 * Math.PI * radius;
+  let offsetAccum = 0;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
+        {total === 0 ? (
+          <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke={COLORS.line} strokeWidth={thickness} />
+        ) : data.map((d, i) => {
+          const fraction = d.value / total;
+          const dash = Math.max(fraction * circumference - 1.5, 0);
+          const gap = circumference - dash;
+          const dashoffset = -offsetAccum;
+          offsetAccum += fraction * circumference;
+          return (
+            <circle key={i} cx={size / 2} cy={size / 2} r={radius} fill="none"
+              stroke={d.color} strokeWidth={thickness}
+              strokeDasharray={`${dash} ${gap}`} strokeDashoffset={dashoffset} strokeLinecap="butt" />
+          );
+        })}
+      </g>
+    </svg>
+  );
+}
+
+function TrendBars({ data }) {
+  const COLORS = useColors();
+  const max = Math.max(1, ...data.flatMap(d => [d.Entradas, d.Gastos]));
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, height: 190, padding: '0 4px' }}>
+      {data.map((d, i) => (
+        <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 155 }}>
+            <div title={'Entradas: ' + formatCurrency(d.Entradas)} style={{ width: 9, height: Math.max((d.Entradas / max) * 155, d.Entradas > 0 ? 3 : 0), backgroundColor: COLORS.ledger, borderRadius: '2px 2px 0 0' }}></div>
+            <div title={'Gastos: ' + formatCurrency(d.Gastos)} style={{ width: 9, height: Math.max((d.Gastos / max) * 155, d.Gastos > 0 ? 3 : 0), backgroundColor: COLORS.brick, borderRadius: '2px 2px 0 0' }}></div>
+          </div>
+          <span style={{ fontSize: 11, color: COLORS.inkFaint }}>{d.mes}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Setup / Auth screens (sempre no tom escuro, como a faixa do saldo)     */
+/* ---------------------------------------------------------------------- */
+
+function SetupNeededScreen() {
+  return (
+    <div style={{ minHeight: '100vh', backgroundColor: HERO.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div style={{ maxWidth: 440, textAlign: 'center' }}>
+        <div style={{ fontSize: 32, marginBottom: 12 }}>🔧</div>
+        <h1 className="cf-font-display" style={{ color: HERO.text, fontSize: 20, marginBottom: 10 }}>Falta configurar a sincronização</h1>
+        <p style={{ color: 'rgba(247,246,242,0.7)', fontSize: 14, lineHeight: 1.7 }}>
+          Abra o arquivo <code style={{ backgroundColor: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4, color: HERO.brass }}>index.html</code>, procure por <code style={{ backgroundColor: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4, color: HERO.brass }}>firebaseConfig</code> perto do topo, e cole ali os dados do seu projeto Firebase.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function AuthScreen() {
+  const [mode, setMode] = useState('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit() {
+    setError('');
+    if (!email || !password) { setError('Preencha e-mail e senha.'); return; }
+    setLoading(true);
+    try {
+      const { auth, createUserWithEmailAndPassword, signInWithEmailAndPassword } = window.__firebase;
+      if (mode === 'signup') await createUserWithEmailAndPassword(auth, email, password);
+      else await signInWithEmailAndPassword(auth, email, password);
+    } catch (e) {
+      setError(traduzErroAuth(e.code));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleGoogle() {
+    setError('');
+    setLoading(true);
+    try {
+      const { auth, GoogleAuthProvider, signInWithPopup } = window.__firebase;
+      await signInWithPopup(auth, new GoogleAuthProvider());
+    } catch (e) {
+      if (e.code !== 'auth/popup-closed-by-user') setError(traduzErroAuth(e.code));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', backgroundColor: HERO.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div style={{ width: '100%', maxWidth: 360 }}>
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <div style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: HERO.brass, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, marginBottom: 12 }}>📖</div>
+          <h1 className="cf-font-display" style={{ color: HERO.text, fontSize: 22, fontWeight: 600, margin: 0 }}>Meu Livro-Caixa</h1>
+          <p style={{ color: 'rgba(247,246,242,0.55)', fontSize: 13, marginTop: 6 }}>Seus dados sincronizados em todos os aparelhos</p>
+        </div>
+
+        <div style={{ backgroundColor: '#FFFFFF', borderRadius: 12, padding: 24 }}>
+          <button onClick={handleGoogle} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '10px 0', borderRadius: 8, border: '1px solid #E4E0D3', backgroundColor: '#fff', fontSize: 14, fontWeight: 600, color: '#1E241F', cursor: 'pointer', marginBottom: 16 }}>
+            <span style={{ width: 18, height: 18, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#4285F4', color: '#fff', fontSize: 11, fontWeight: 700, flexShrink: 0 }}>G</span>
+            Continuar com Google
+          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 16px' }}>
+            <div style={{ flex: 1, height: 1, backgroundColor: '#E4E0D3' }}></div>
+            <span style={{ fontSize: 11, color: '#9CA599' }}>ou use e-mail e senha</span>
+            <div style={{ flex: 1, height: 1, backgroundColor: '#E4E0D3' }}></div>
+          </div>
+          <div className="cf-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 6, padding: 4, borderRadius: 8, backgroundColor: '#F7F6F2', marginBottom: 20 }}>
+            <button onClick={() => { setMode('login'); setError(''); }} style={{ padding: '8px 0', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, ...(mode === 'login' ? { backgroundColor: '#fff', color: '#1E241F', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' } : { backgroundColor: 'transparent', color: '#646F60' }) }}>Entrar</button>
+            <button onClick={() => { setMode('signup'); setError(''); }} style={{ padding: '8px 0', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, ...(mode === 'signup' ? { backgroundColor: '#fff', color: '#1E241F', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' } : { backgroundColor: 'transparent', color: '#646F60' }) }}>Criar conta</button>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 500, color: '#646F60', display: 'block', marginBottom: 6 }}>E-mail</label>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="voce@email.com" style={{ width: '100%', padding: '10px 12px', fontSize: 14, borderRadius: 8, border: '1px solid #E4E0D3' }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 500, color: '#646F60', display: 'block', marginBottom: 6 }}>Senha</label>
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" onKeyDown={(e) => e.key === 'Enter' && handleSubmit()} style={{ width: '100%', padding: '10px 12px', fontSize: 14, borderRadius: 8, border: '1px solid #E4E0D3' }} />
+            </div>
+            {error && <p style={{ fontSize: 12, margin: 0, color: '#AE4432' }}>⚠️ {error}</p>}
+            <button onClick={handleSubmit} disabled={loading} style={{ padding: '11px 0', borderRadius: 8, border: 'none', backgroundColor: '#1E241F', color: '#fff', fontSize: 14, fontWeight: 600, cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.6 : 1, marginTop: 4 }}>
+              {loading ? 'Aguarde...' : mode === 'login' ? 'Entrar' : 'Criar conta'}
+            </button>
+          </div>
+        </div>
+        <p style={{ textAlign: 'center', fontSize: 11, color: 'rgba(247,246,242,0.4)', marginTop: 16 }}>Use o mesmo e-mail e senha em todos os seus aparelhos.</p>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Transaction modal                                                      */
+/* ---------------------------------------------------------------------- */
+
+function TransactionModal({ txn, onSave, onClose }) {
+  const COLORS = useColors();
+  const [form, setForm] = useState(txn);
+  const [error, setError] = useState('');
+  const [repeatMonthly, setRepeatMonthly] = useState(false);
+  const categories = CATEGORIES.filter(c => c.type === form.type);
+
+  function handleTypeChange(newType) {
+    const cats = CATEGORIES.filter(c => c.type === newType);
+    setForm(f => ({ ...f, type: newType, categoryId: cats[0] ? cats[0].id : '' }));
+  }
+
+  function handleSubmit() {
+    const amount = parseFloat(String(form.amount).replace(',', '.'));
+    if (!form.description.trim()) { setError('Adicione uma descrição.'); return; }
+    if (isNaN(amount) || amount <= 0) { setError('Informe um valor válido.'); return; }
+    onSave({ ...form, amount }, repeatMonthly);
+  }
+
+  return (
+    <div className="cf-flex" style={{ position: 'fixed', inset: 0, zIndex: 50, alignItems: 'center', justifyContent: 'center', padding: 16, backgroundColor: 'rgba(20,24,20,0.55)' }} onClick={onClose}>
+      <div className="cf-modal" style={{ backgroundColor: COLORS.surface, borderRadius: 12, width: '100%', maxWidth: 420, maxHeight: '90vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
+        <div className="cf-flex" style={{ alignItems: 'center', justifyContent: 'space-between', padding: 20, borderBottom: `1px solid ${COLORS.line}` }}>
+          <h3 className="cf-font-display" style={{ fontWeight: 600, fontSize: 18, margin: 0, color: COLORS.ink }}>{txn.id ? 'Editar Lançamento' : 'Novo Lançamento'}</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', padding: 4, color: COLORS.inkFaint }} aria-label="Fechar">✕</button>
+        </div>
+
+        <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="cf-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 6, padding: 4, borderRadius: 8, backgroundColor: COLORS.paper }}>
+            <button onClick={() => handleTypeChange('expense')} style={{ padding: '8px 0', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600, ...(form.type === 'expense' ? { backgroundColor: COLORS.surface, color: COLORS.brick, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' } : { backgroundColor: 'transparent', color: COLORS.inkSoft }) }}>Gasto</button>
+            <button onClick={() => handleTypeChange('income')} style={{ padding: '8px 0', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600, ...(form.type === 'income' ? { backgroundColor: COLORS.surface, color: COLORS.ledger, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' } : { backgroundColor: 'transparent', color: COLORS.inkSoft }) }}>Entrada</button>
+          </div>
+
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 500, color: COLORS.inkSoft, display: 'block', marginBottom: 6 }}>Descrição</label>
+            <input type="text" value={form.description} onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Ex: Almoço, Uber, Salário..." autoFocus
+              style={{ width: '100%', padding: '10px 12px', fontSize: 14, borderRadius: 8, border: `1px solid ${COLORS.line}`, backgroundColor: COLORS.surface, color: COLORS.ink }} />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 500, color: COLORS.inkSoft, display: 'block', marginBottom: 6 }}>Valor (R$)</label>
+            <input type="text" inputMode="decimal" value={form.amount} onChange={(e) => setForm(f => ({ ...f, amount: e.target.value }))} placeholder="0,00" className="cf-font-mono"
+              style={{ width: '100%', padding: '10px 12px', fontSize: 14, borderRadius: 8, border: `1px solid ${COLORS.line}`, backgroundColor: COLORS.surface, color: COLORS.ink }} />
+          </div>
+
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 500, color: COLORS.inkSoft, display: 'block', marginBottom: 6 }}>Categoria</label>
+            <div className="cf-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+              {categories.map(cat => {
+                const active = form.categoryId === cat.id;
+                return (
+                  <button key={cat.id} onClick={() => setForm(f => ({ ...f, categoryId: cat.id }))}
+                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '10px 4px', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 500,
+                      border: active ? `1px solid ${cat.color}` : `1px solid ${COLORS.line}`,
+                      backgroundColor: active ? cat.color : 'transparent', color: active ? '#FFFFFF' : COLORS.inkSoft }}>
+                    <span style={{ fontSize: 16, lineHeight: 1 }}>{cat.icon}</span>
+                    {cat.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="cf-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 500, color: COLORS.inkSoft, display: 'block', marginBottom: 6 }}>Data</label>
+              <input type="date" value={form.date} onChange={(e) => setForm(f => ({ ...f, date: e.target.value }))}
+                style={{ width: '100%', padding: '10px 12px', fontSize: 14, borderRadius: 8, border: `1px solid ${COLORS.line}`, backgroundColor: COLORS.surface, color: COLORS.ink }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 500, color: COLORS.inkSoft, display: 'block', marginBottom: 6 }}>Pagamento</label>
+              <select value={form.paymentMethod} onChange={(e) => setForm(f => ({ ...f, paymentMethod: e.target.value }))}
+                style={{ width: '100%', padding: '10px 12px', fontSize: 14, borderRadius: 8, border: `1px solid ${COLORS.line}`, backgroundColor: COLORS.surface, color: COLORS.ink }}>
+                {PAYMENT_METHODS.map(pm => <option key={pm.id} value={pm.id}>{pm.name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {!txn.id && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: COLORS.inkSoft, cursor: 'pointer' }}>
+              <input type="checkbox" checked={repeatMonthly} onChange={(e) => setRepeatMonthly(e.target.checked)} style={{ width: 16, height: 16 }} />
+              🔁 Repetir todo mês (cria os próximos 12 meses)
+            </label>
+          )}
+
+          {error && <p style={{ fontSize: 12, margin: 0, color: COLORS.brick }}>⚠️ {error}</p>}
+        </div>
+
+        <div className="cf-flex" style={{ gap: 8, justifyContent: 'flex-end', padding: 20, borderTop: `1px solid ${COLORS.line}` }}>
+          <button onClick={onClose} style={{ padding: '10px 16px', fontSize: 14, borderRadius: 8, border: 'none', background: 'none', color: COLORS.inkSoft, cursor: 'pointer', fontWeight: 500 }}>Cancelar</button>
+          <button onClick={handleSubmit} style={{ padding: '10px 20px', fontSize: 14, borderRadius: 8, border: 'none', backgroundColor: COLORS.ink, color: COLORS.surface, cursor: 'pointer', fontWeight: 600 }}>Salvar Lançamento</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Main app (recebe o usuário logado e sincroniza via Firestore)          */
+/* ---------------------------------------------------------------------- */
+
+function LivroCaixa({ user }) {
+  const COLORS = useColors();
+  const { isDark, toggleTheme } = useTheme();
+  const [transactions, setTransactions] = useState([]);
+  const [budgets, setBudgets] = useState({});
+  const [isLoaded, setIsLoaded] = useState(false);
+  const isRemoteUpdate = useRef(false);
+  const [currentDate, setCurrentDate] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingTxn, setEditingTxn] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [searchText, setSearchText] = useState('');
+  const [filterType, setFilterType] = useState('all');
+  const [filterCategory, setFilterCategory] = useState('all');
+  const [budgetEditMode, setBudgetEditMode] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  useEffect(() => {
+    const { db, doc, onSnapshot } = window.__firebase;
+    const ref = doc(db, 'users', user.uid);
+    const unsub = onSnapshot(ref, (snap) => {
+      isRemoteUpdate.current = true;
+      if (snap.exists()) {
+        const data = snap.data();
+        setTransactions(data.transactions || []);
+        setBudgets(data.budgets || {});
+      }
+      setIsLoaded(true);
+    }, (err) => {
+      console.error('Erro ao sincronizar', err);
+      setIsLoaded(true);
+    });
+    return () => unsub();
+  }, [user.uid]);
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    if (isRemoteUpdate.current) { isRemoteUpdate.current = false; return; }
+    const { db, doc, setDoc } = window.__firebase;
+    const ref = doc(db, 'users', user.uid);
+    setDoc(ref, { transactions, budgets, updatedAt: Date.now() }).catch((e) => console.error('Erro ao salvar', e));
+  }, [transactions, budgets, isLoaded, user.uid]);
+
+  function showToast(message, action) {
+    setToast({ message, action });
+    setTimeout(() => setToast(null), action ? 5000 : 2500);
+  }
+
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+
+  const monthTransactions = useMemo(() => transactions.filter(t => {
+    const [ty, tm] = t.date.split('-').map(Number);
+    return ty === year && (tm - 1) === month;
+  }), [transactions, year, month]);
+
+  const prevMonthDate = new Date(year, month - 1, 1);
+  const prevYear = prevMonthDate.getFullYear();
+  const prevMonthIdx = prevMonthDate.getMonth();
+  const prevMonthTransactions = useMemo(() => transactions.filter(t => {
+    const [ty, tm] = t.date.split('-').map(Number);
+    return ty === prevYear && (tm - 1) === prevMonthIdx;
+  }), [transactions, prevYear, prevMonthIdx]);
+
+  function sumByType(list, type) { return list.filter(t => t.type === type).reduce((acc, t) => acc + Number(t.amount), 0); }
+
+  const totalIncome = sumByType(monthTransactions, 'income');
+  const totalExpense = sumByType(monthTransactions, 'expense');
+  const balance = totalIncome - totalExpense;
+  const prevIncome = sumByType(prevMonthTransactions, 'income');
+  const prevExpense = sumByType(prevMonthTransactions, 'expense');
+  const incomeChange = pctChange(totalIncome, prevIncome);
+  const expenseChange = pctChange(totalExpense, prevExpense);
+
+  let stampPercent, stampLabel, stampPositive;
+  if (totalIncome === 0 && totalExpense === 0) { stampPercent = 0; stampLabel = 'Sem dados'; stampPositive = true; }
+  else if (totalIncome === 0) { stampPercent = 100; stampLabel = 'Déficit'; stampPositive = false; }
+  else { const rate = (balance / totalIncome) * 100; stampPercent = Math.abs(rate); stampLabel = rate >= 0 ? 'Economia' : 'Déficit'; stampPositive = rate >= 0; }
+
+  const expensesByCategory = useMemo(() => {
+    const map = {};
+    monthTransactions.filter(t => t.type === 'expense').forEach(t => { map[t.categoryId] = (map[t.categoryId] || 0) + Number(t.amount); });
+    return Object.entries(map).map(([categoryId, value]) => ({ categoryId, value, category: getCategoryById(categoryId) })).sort((a, b) => b.value - a.value);
+  }, [monthTransactions]);
+
+  const last6MonthsData = useMemo(() => {
+    const arr = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(year, month - i, 1);
+      const dy = d.getFullYear(), dm = d.getMonth();
+      const list = transactions.filter(t => { const [ty, tm] = t.date.split('-').map(Number); return ty === dy && (tm - 1) === dm; });
+      arr.push({ mes: MONTH_NAMES[dm].slice(0, 3), Entradas: sumByType(list, 'income'), Gastos: sumByType(list, 'expense') });
+    }
+    return arr;
+  }, [transactions, year, month]);
+
+  const expenseCategories = CATEGORIES.filter(c => c.type === 'expense');
+
+  const filteredTransactions = useMemo(() => monthTransactions.filter(t => {
+    if (filterType !== 'all' && t.type !== filterType) return false;
+    if (filterCategory !== 'all' && t.categoryId !== filterCategory) return false;
+    if (searchText && !t.description.toLowerCase().includes(searchText.toLowerCase())) return false;
+    return true;
+  }).sort((a, b) => b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id))), [monthTransactions, filterType, filterCategory, searchText]);
+
+  function openAddModal(type) {
+    setEditingTxn({ id: null, type: type || 'expense', description: '', amount: '', categoryId: type === 'income' ? 'salario' : 'alimentacao', date: todayISO(), paymentMethod: 'pix' });
+    setModalOpen(true);
+  }
+  function openEditModal(txn) { setEditingTxn({ ...txn, amount: String(txn.amount) }); setModalOpen(true); }
+
+  function handleSaveTransaction(txn, repeatMonthly) {
+    if (txn.id) {
+      setTransactions(prev => prev.map(t => t.id === txn.id ? txn : t));
+      showToast('Lançamento atualizado.');
+    } else if (repeatMonthly) {
+      const datas = gerarDatasRecorrentes(txn.date, 12);
+      const copies = datas.map(date => ({ ...txn, id: generateId(), date, recurring: true }));
+      setTransactions(prev => [...prev, ...copies]);
+      showToast('Lançamento criado para os próximos 12 meses.');
+    } else {
+      setTransactions(prev => [...prev, { ...txn, id: generateId() }]);
+      showToast('Lançamento adicionado.');
+    }
+    setModalOpen(false); setEditingTxn(null);
+  }
+
+  function handleDelete(id) {
+    const deletedTxn = transactions.find(t => t.id === id);
+    setTransactions(prev => prev.filter(t => t.id !== id));
+    setDeleteConfirm(null);
+    showToast('Lançamento excluído.', deletedTxn ? { label: 'Desfazer', onClick: () => setTransactions(prev => [...prev, deletedTxn]) } : null);
+  }
+
+  function handleSetBudget(categoryId, value) { const num = parseFloat(String(value).replace(',', '.')); setBudgets(prev => ({ ...prev, [categoryId]: isNaN(num) ? 0 : num })); }
+  function changeMonth(delta) { setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() + delta, 1)); }
+
+  function exportCSV() {
+    const header = 'Data,Tipo,Descricao,Categoria,Forma de Pagamento,Valor\n';
+    const rows = filteredTransactions.map(t => {
+      const cat = getCategoryById(t.categoryId);
+      const pm = PAYMENT_METHODS.find(p => p.id === t.paymentMethod);
+      return [formatDateBR(t.date), t.type === 'income' ? 'Entrada' : 'Gasto', `"${t.description.replace(/"/g, '""')}"`, cat.name, pm ? pm.name : '', String(t.amount.toFixed(2)).replace('.', ',')].join(',');
+    }).join('\n');
+    const blob = new Blob(['\uFEFF' + header + rows], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `lancamentos_${MONTH_NAMES[month]}_${year}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    showToast('CSV exportado.');
+  }
+  function resetAllData() { setTransactions([]); setBudgets({}); setShowResetConfirm(false); showToast('Todos os dados foram apagados.'); }
+
+  if (!isLoaded) {
+    return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: COLORS.inkFaint, backgroundColor: COLORS.paper }}>Sincronizando seu livro-caixa...</div>;
+  }
+
+  return (
+    <div style={{ backgroundColor: COLORS.paper, minHeight: '100vh', color: COLORS.ink, paddingTop: 'env(safe-area-inset-top)' }}>
+      {toast && (
+        <div className="cf-toast" style={{ position: 'fixed', top: 16, right: 16, zIndex: 50, fontSize: 14, padding: '12px 16px', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.25)', color: HERO.text, backgroundColor: HERO.bg, display: 'flex', alignItems: 'center', gap: 14, maxWidth: '90vw' }}>
+          <span>{toast.message}</span>
+          {toast.action && (
+            <button onClick={() => { toast.action.onClick(); setToast(null); }} style={{ background: 'none', border: 'none', color: HERO.brass, fontWeight: 700, fontSize: 13, cursor: 'pointer', textDecoration: 'underline', flexShrink: 0 }}>
+              {toast.action.label}
+            </button>
+          )}
+        </div>
+      )}
+
+      <div style={{ backgroundColor: HERO.bg }}>
+        <div style={{ maxWidth: 960, margin: '0 auto', padding: '16px 20px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottom: `1px solid ${HERO.lineOnDark}` }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: HERO.brass, fontSize: 16, flexShrink: 0 }}>📖</div>
+            <span className="cf-font-display" style={{ color: HERO.text, fontWeight: 600, fontSize: 18 }}>Meu Livro-Caixa</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <button onClick={() => changeMonth(-1)} aria-label="Mês anterior" style={{ background: 'none', border: 'none', color: HERO.text, fontSize: 18, cursor: 'pointer', padding: '4px 8px' }}>‹</button>
+            <span style={{ color: HERO.text, fontSize: 14, width: 110, textAlign: 'center', textTransform: 'capitalize' }}>{MONTH_NAMES[month]} {year}</span>
+            <button onClick={() => changeMonth(1)} aria-label="Próximo mês" style={{ background: 'none', border: 'none', color: HERO.text, fontSize: 18, cursor: 'pointer', padding: '4px 8px' }}>›</button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button onClick={toggleTheme} aria-label="Alternar tema" title="Alternar tema claro/escuro" style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, fontSize: 14, color: HERO.text, background: 'none', border: `1px solid ${HERO.lineOnDark}`, cursor: 'pointer' }}>
+              {isDark ? '☀️' : '🌙'}
+            </button>
+            <button onClick={exportCSV} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 500, color: HERO.text, background: 'none', border: `1px solid ${HERO.lineOnDark}`, cursor: 'pointer' }}>⬇ <span className="cf-hide-sm">Exportar</span></button>
+            <button onClick={() => openAddModal('expense')} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600, backgroundColor: HERO.brass, color: HERO.bg, border: 'none', cursor: 'pointer' }}>+ <span className="cf-hide-sm">Nova Transação</span></button>
+          </div>
+        </div>
+
+        <div style={{ maxWidth: 960, margin: '0 auto', padding: '28px 20px 36px' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 28 }}>
+            <div>
+              <p style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.2em', color: HERO.brass, margin: '0 0 8px' }}>Saldo · {MONTH_NAMES[month]} de {year}</p>
+              <p className="cf-font-mono" style={{ fontWeight: 600, fontSize: 44, lineHeight: 1, color: HERO.text, margin: '0 0 20px' }}>{formatCurrency(balance)}</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 28 }}>
+                <div>
+                  <span style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: HERO.textFaint }}>Entradas</span>
+                  <p className="cf-font-mono" style={{ fontWeight: 500, fontSize: 14, margin: '2px 0 0', color: HERO.ledgerBright }}>+ {formatCurrency(totalIncome)} <span style={{ opacity: 0.7 }}>{incomeChange >= 0 ? '↑' : '↓'} {Math.abs(incomeChange).toFixed(0)}%</span></p>
+                </div>
+                <div>
+                  <span style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', color: HERO.textFaint }}>Gastos</span>
+                  <p className="cf-font-mono" style={{ fontWeight: 500, fontSize: 14, margin: '2px 0 0', color: HERO.brickBright }}>− {formatCurrency(totalExpense)} <span style={{ opacity: 0.7 }}>{expenseChange <= 0 ? '↓' : '↑'} {Math.abs(expenseChange).toFixed(0)}%</span></p>
+                </div>
+              </div>
+            </div>
+            <div className="cf-stamp cf-font-mono" style={{ width: 104, height: 104, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: '2px dashed', borderRadius: 9999, transform: 'rotate(-8deg)', borderColor: stampPositive ? HERO.brass : HERO.brickBright, color: stampPositive ? HERO.brass : HERO.brickBright }}>
+              <span style={{ fontSize: 20, fontWeight: 700 }}>{stampPercent.toFixed(0)}%</span>
+              <span style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'center', lineHeight: 1.2, padding: '0 8px', marginTop: 2 }}>{stampLabel}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style={{ height: 13, backgroundColor: HERO.bg, backgroundImage: `radial-gradient(circle at center, ${COLORS.paper} 4px, transparent 4.5px)`, backgroundSize: '22px 22px', backgroundPosition: '11px center', backgroundRepeat: 'repeat-x' }}></div>
+
+      <main style={{ maxWidth: 960, margin: '0 auto', padding: '32px 20px', display: 'flex', flexDirection: 'column', gap: 24 }}>
+
+        <div className="cf-grid" style={{ gridTemplateColumns: '1fr', gap: 20 }}>
+          <style>{'@media (min-width:1024px){.cf-charts-grid{grid-template-columns:2fr 3fr !important;}}'}</style>
+          <div className="cf-grid cf-charts-grid" style={{ gridTemplateColumns: '1fr', gap: 20 }}>
+            <div style={{ backgroundColor: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 12, padding: 20 }}>
+              <h3 className="cf-font-display" style={{ fontWeight: 600, fontSize: 16, margin: 0, color: COLORS.ink }}>Gastos por Categoria</h3>
+              <p style={{ fontSize: 12, margin: '2px 0 16px', color: COLORS.inkFaint }}>Para onde foi o dinheiro esse mês</p>
+              {expensesByCategory.length === 0 ? (
+                <div style={{ height: 200, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: COLORS.inkFaint }}>
+                  <span style={{ fontSize: 28, marginBottom: 8 }}>📭</span>Sem gastos registrados
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'center', margin: '4px 0 16px' }}>
+                    <DonutChart data={expensesByCategory.map(e => ({ value: e.value, color: e.category.color }))} />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 160, overflowY: 'auto', paddingRight: 4 }}>
+                    {expensesByCategory.map(item => (
+                      <div key={item.categoryId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, backgroundColor: item.category.color }}></span>
+                          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: COLORS.inkSoft }}>{item.category.name}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                          <span style={{ color: COLORS.inkFaint }}>{totalExpense > 0 ? ((item.value / totalExpense) * 100).toFixed(0) : 0}%</span>
+                          <span className="cf-font-mono" style={{ fontWeight: 500, color: COLORS.ink }}>{formatCurrency(item.value)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div style={{ backgroundColor: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 12, padding: 20 }}>
+              <h3 className="cf-font-display" style={{ fontWeight: 600, fontSize: 16, margin: 0, color: COLORS.ink }}>Entradas vs Gastos</h3>
+              <p style={{ fontSize: 12, margin: '2px 0 16px', color: COLORS.inkFaint }}>Últimos 6 meses</p>
+              <TrendBars data={last6MonthsData} />
+              <div style={{ display: 'flex', gap: 20, justifyContent: 'center', marginTop: 8, fontSize: 12 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: COLORS.inkSoft }}><span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: COLORS.ledger, display: 'inline-block' }}></span>Entradas</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: COLORS.inkSoft }}><span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: COLORS.brick, display: 'inline-block' }}></span>Gastos</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ backgroundColor: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 12, padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 14 }}>🎯</span>
+              <h3 className="cf-font-display" style={{ fontWeight: 600, fontSize: 16, margin: 0, color: COLORS.ink }}>Orçamento por Categoria</h3>
+            </div>
+            <button onClick={() => setBudgetEditMode(!budgetEditMode)} style={{ fontSize: 12, fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', color: COLORS.ledger }}>{budgetEditMode ? 'Concluir' : 'Editar limites'}</button>
+          </div>
+          <div className="cf-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
+            {expenseCategories.map(cat => {
+              const spent = (expensesByCategory.find(e => e.categoryId === cat.id) || {}).value || 0;
+              const budget = budgets[cat.id] || 0;
+              const pct = budget > 0 ? Math.min((spent / budget) * 100, 100) : 0;
+              const isOver = budget > 0 && spent > budget;
+              return (
+                <div key={cat.id} style={{ padding: 12, borderRadius: 8, border: `1px solid ${COLORS.line}` }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, backgroundColor: cat.color + '1E', fontSize: 14 }}>{cat.icon}</div>
+                      <span style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: COLORS.ink }}>{cat.name}</span>
+                    </div>
+                    {isOver && <span style={{ fontSize: 13, flexShrink: 0 }}>⚠️</span>}
+                  </div>
+                  {budgetEditMode ? (
+                    <input type="number" placeholder="Definir limite" defaultValue={budget || ''} onBlur={(e) => handleSetBudget(cat.id, e.target.value)} className="cf-font-mono" style={{ width: '100%', fontSize: 12, borderRadius: 6, border: `1px solid ${COLORS.line}`, padding: '6px 8px', backgroundColor: COLORS.surface, color: COLORS.ink }} />
+                  ) : budget > 0 ? (
+                    <>
+                      <div style={{ width: '100%', height: 6, borderRadius: 3, overflow: 'hidden', marginBottom: 6, backgroundColor: COLORS.paper }}>
+                        <div style={{ height: '100%', borderRadius: 3, width: pct + '%', backgroundColor: isOver ? COLORS.brick : cat.color, transition: 'width 0.3s ease' }}></div>
+                      </div>
+                      <div className="cf-font-mono" style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                        <span style={{ color: isOver ? COLORS.brick : COLORS.inkSoft, fontWeight: isOver ? 600 : 400 }}>{formatCurrency(spent)}</span>
+                        <span style={{ color: COLORS.inkFaint }}>de {formatCurrency(budget)}</span>
+                      </div>
+                    </>
+                  ) : <p style={{ fontSize: 11, margin: 0, color: COLORS.inkFaint }}>Sem limite definido</p>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ backgroundColor: COLORS.surface, border: `1px solid ${COLORS.line}`, borderRadius: 12, overflow: 'hidden' }}>
+          <div style={{ padding: 20, borderBottom: `1px solid ${COLORS.line}`, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+            <div style={{ position: 'relative', flex: 1, minWidth: 180 }}>
+              <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 13 }}>🔍</span>
+              <input type="text" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Buscar lançamento..." style={{ width: '100%', padding: '8px 12px 8px 34px', fontSize: 14, borderRadius: 8, border: `1px solid ${COLORS.line}`, backgroundColor: COLORS.surface, color: COLORS.ink }} />
+            </div>
+            <select value={filterType} onChange={(e) => setFilterType(e.target.value)} style={{ fontSize: 14, borderRadius: 8, border: `1px solid ${COLORS.line}`, padding: '8px 12px', color: COLORS.inkSoft, backgroundColor: COLORS.surface }}>
+              <option value="all">Todos os tipos</option><option value="income">Entradas</option><option value="expense">Gastos</option>
+            </select>
+            <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} style={{ fontSize: 14, borderRadius: 8, border: `1px solid ${COLORS.line}`, padding: '8px 12px', color: COLORS.inkSoft, backgroundColor: COLORS.surface }}>
+              <option value="all">Todas categorias</option>
+              {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+
+          <div>
+            {filteredTransactions.length === 0 ? (
+              <div style={{ padding: '60px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', color: COLORS.inkFaint }}>
+                <span style={{ fontSize: 28, marginBottom: 12 }}>📭</span>
+                <p style={{ fontSize: 14, margin: '0 0 4px', color: COLORS.inkSoft }}>Nenhum lançamento encontrado</p>
+                <p style={{ fontSize: 12, margin: '0 0 16px' }}>Registre sua primeira entrada ou gasto do mês.</p>
+                <button onClick={() => openAddModal('expense')} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, color: COLORS.surface, backgroundColor: COLORS.ink, border: 'none', cursor: 'pointer' }}>+ Novo Lançamento</button>
+              </div>
+            ) : filteredTransactions.map((txn, idx) => {
+              const cat = getCategoryById(txn.categoryId);
+              const pm = PAYMENT_METHODS.find(p => p.id === txn.paymentMethod);
+              return (
+                <div key={txn.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', borderTop: idx === 0 ? 'none' : `1px solid ${COLORS.line}` }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, backgroundColor: cat.color + '1E', fontSize: 16 }}>{cat.icon}</div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <p style={{ fontSize: 14, fontWeight: 500, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: COLORS.ink }}>
+                      {txn.description} {txn.recurring && <span title="Lançamento recorrente" style={{ fontSize: 11 }}>🔁</span>}
+                    </p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, flexWrap: 'wrap', color: COLORS.inkFaint }}>
+                      <span>{cat.name}</span><span>·</span><span className="cf-font-mono">{formatDateBR(txn.date)}</span>
+                      {pm && <><span>·</span><span>{pm.icon} {pm.name}</span></>}
+                    </div>
+                  </div>
+                  <span className="cf-font-mono" style={{ fontSize: 14, fontWeight: 600, flexShrink: 0, color: txn.type === 'income' ? COLORS.ledger : COLORS.brick }}>{txn.type === 'income' ? '+ ' : '− '}{formatCurrency(txn.amount)}</span>
+                  <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+                    <button onClick={() => openEditModal(txn)} aria-label="Editar" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 6, fontSize: 14 }}>✏️</button>
+                    <button onClick={() => setDeleteConfirm(txn.id)} aria-label="Excluir" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 6, fontSize: 14 }}>🗑️</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, paddingTop: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: COLORS.inkFaint }}>{user.email}</span>
+          <span style={{ fontSize: 12, color: COLORS.inkFaint }}>·</span>
+          <button onClick={() => window.__firebase.signOut(window.__firebase.auth)} style={{ fontSize: 12, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', color: COLORS.inkFaint }}>Sair</button>
+          <span style={{ fontSize: 12, color: COLORS.inkFaint }}>·</span>
+          <button onClick={() => setShowResetConfirm(true)} style={{ fontSize: 12, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', color: COLORS.inkFaint }}>Limpar todos os dados</button>
+        </div>
+      </main>
+
+      {modalOpen && editingTxn && <TransactionModal txn={editingTxn} onSave={handleSaveTransaction} onClose={() => { setModalOpen(false); setEditingTxn(null); }} />}
+
+      {deleteConfirm && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, backgroundColor: 'rgba(20,24,20,0.55)' }} onClick={() => setDeleteConfirm(null)}>
+          <div className="cf-modal" style={{ backgroundColor: COLORS.surface, borderRadius: 12, padding: 24, maxWidth: 360, width: '100%' }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="cf-font-display" style={{ fontWeight: 600, fontSize: 18, margin: '0 0 8px', color: COLORS.ink }}>Excluir lançamento?</h3>
+            <p style={{ fontSize: 14, margin: '0 0 20px', color: COLORS.inkSoft }}>Você pode desfazer logo em seguida, se precisar.</p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setDeleteConfirm(null)} style={{ padding: '8px 16px', fontSize: 14, borderRadius: 8, border: 'none', background: 'none', color: COLORS.inkSoft, cursor: 'pointer', fontWeight: 500 }}>Cancelar</button>
+              <button onClick={() => handleDelete(deleteConfirm)} style={{ padding: '8px 16px', fontSize: 14, borderRadius: 8, border: 'none', backgroundColor: COLORS.brick, color: '#fff', cursor: 'pointer', fontWeight: 600 }}>Excluir</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showResetConfirm && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, backgroundColor: 'rgba(20,24,20,0.55)' }} onClick={() => setShowResetConfirm(false)}>
+          <div className="cf-modal" style={{ backgroundColor: COLORS.surface, borderRadius: 12, padding: 24, maxWidth: 360, width: '100%' }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="cf-font-display" style={{ fontWeight: 600, fontSize: 18, margin: '0 0 8px', color: COLORS.ink }}>Apagar todos os dados?</h3>
+            <p style={{ fontSize: 14, margin: '0 0 20px', color: COLORS.inkSoft }}>Todos os lançamentos e orçamentos serão removidos permanentemente, em todos os aparelhos. Essa ação não pode ser desfeita.</p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowResetConfirm(false)} style={{ padding: '8px 16px', fontSize: 14, borderRadius: 8, border: 'none', background: 'none', color: COLORS.inkSoft, cursor: 'pointer', fontWeight: 500 }}>Cancelar</button>
+              <button onClick={resetAllData} style={{ padding: '8px 16px', fontSize: 14, borderRadius: 8, border: 'none', backgroundColor: COLORS.brick, color: '#fff', cursor: 'pointer', fontWeight: 600 }}>Apagar Tudo</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Root: decide entre Setup / Login / App                                 */
+/* ---------------------------------------------------------------------- */
+
+function Root() {
+  const [ready, setReady] = useState(!!window.__firebase || window.__firebaseConfigured === false);
+  const [authUser, setAuthUser] = useState(undefined);
+
+  useEffect(() => {
+    function onFirebaseReady() { setReady(true); }
+    window.addEventListener('firebase-ready', onFirebaseReady);
+    return () => window.removeEventListener('firebase-ready', onFirebaseReady);
+  }, []);
+
+  useEffect(() => {
+    if (!ready || !window.__firebaseConfigured) return;
+    const { auth, onAuthStateChanged } = window.__firebase;
+    const unsub = onAuthStateChanged(auth, (u) => setAuthUser(u));
+    return () => unsub();
+  }, [ready]);
+
+  if (!ready) {
+    return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9CA599' }}>Carregando...</div>;
+  }
+  if (!window.__firebaseConfigured) {
+    return <SetupNeededScreen />;
+  }
+  if (authUser === undefined) {
+    return <div style={{ minHeight: '100vh', backgroundColor: HERO.bg }}></div>;
+  }
+  if (!authUser) {
+    return <AuthScreen />;
+  }
+  return <LivroCaixa user={authUser} />;
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<ThemeProvider><Root /></ThemeProvider>);
+</script>
+</body>
+</html>
